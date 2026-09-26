@@ -225,10 +225,49 @@ def main():
         else:
             pen_down = False
 
+        # Composite: mask-based to preserve colours
+        mask = canvas.any(axis=2)
+        frame[mask] = canvas[mask]
+
+        # Draw preview shapes (not committed)
+        if pen_hand and pen_down and tool != 1 and anchor is not None:
+            px = pen_hand["px"]
+            current = px[8]
+            commit_shape(frame, tool, anchor, current, (0, 255, 255), 4)
+
+        # Handle keyboard input
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q') or key == 27:  # 27 is ESC
+            break
+        elif key == ord('s'):
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"air_draw_{timestamp}.png"
+            cv2.imwrite(filename, frame)
+            print(f"Saved: {filename}")
+        elif key == ord('c'):
+            canvas[:] = 0
+        elif key == ord('['):
+            pinch_on_threshold = max(0.1, pinch_on_threshold - 0.02)
+            pinch_off_threshold = max(0.1, pinch_off_threshold - 0.02)
+        elif key == ord(']'):
+            pinch_on_threshold = min(0.9, pinch_on_threshold + 0.02)
+            pinch_off_threshold = min(0.9, pinch_off_threshold + 0.02)
+
+        # HUD: top-left, small text
+        hud_lines = [
+            f"Tool: {TOOLS.get(tool, '?')} ({tool_count})",
+            f"Pinch: {pinch_ratio(pen_hand['px'] if pen_hand and palm_width(pen_hand['px']) >= 1 else []):.2f} / {pinch_on_threshold:.2f}",
+            f"Pen: {'PEN' if pen_down else '---'}",
+            f"Hands: {len(hands)}, Labels: {', '.join(h['label'] for h in hands)}",
+        ]
+
+        y = 20
+        for line in hud_lines:
+            cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            y += 15
+
         # Display
         cv2.imshow("Air Draw", frame)
-        if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
-            break
 
     # Cleanup
     cap.release()
