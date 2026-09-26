@@ -1,5 +1,5 @@
 from air_draw import (
-    dist, palm_width, pinch_ratio, fingers_up, commit_shape,
+    dist, palm_width, pinch_ratio, fingers_up, commit_shape, pen_state_transition,
     PINCH_ON, PINCH_OFF, PIPS
 )
 import math
@@ -96,25 +96,12 @@ def test_finger_counting():
 
 
 def test_hysteresis():
-    """A ratio between PINCH_ON and PINCH_OFF preserves prior state."""
-    # Start with pen up
-    pen_down = False
-
-    # Ratio at boundary: should stay up
-    ratio = (PINCH_ON + PINCH_OFF) / 2  # midpoint
-    if ratio < PINCH_ON:
-        pen_down = True
-    elif ratio > PINCH_OFF:
-        pen_down = False
-    assert not pen_down, "Midpoint ratio should keep pen up"
-
-    # Now pen down
-    pen_down = True
-    if ratio < PINCH_ON:
-        pen_down = True
-    elif ratio > PINCH_OFF:
-        pen_down = False
-    assert pen_down, "Midpoint ratio should keep pen down"
+    """A ratio between PINCH_ON and PINCH_OFF preserves prior state; edges flip it."""
+    mid = (PINCH_ON + PINCH_OFF) / 2
+    assert pen_state_transition(mid, False, PINCH_ON, PINCH_OFF) is False, "Midpoint should keep pen up"
+    assert pen_state_transition(mid, True, PINCH_ON, PINCH_OFF) is True, "Midpoint should keep pen down"
+    assert pen_state_transition(PINCH_ON - 0.01, False, PINCH_ON, PINCH_OFF) is True, "Below ON should press"
+    assert pen_state_transition(PINCH_OFF + 0.01, True, PINCH_ON, PINCH_OFF) is False, "Above OFF should release"
 
 
 def test_shape_geometry():
@@ -131,23 +118,26 @@ def test_shape_geometry():
     canvas[:] = 0
     commit_shape(canvas, 3, (100, 100), (300, 200), (0, 0, 255), 1)
     nz = np.nonzero(canvas)
-    if len(nz[0]) > 0:
-        y_min, y_max = nz[0].min(), nz[0].max()
-        x_min, x_max = nz[1].min(), nz[1].max()
-        assert x_min >= 99 and x_max <= 301, f"Rect x bbox: {x_min}–{x_max}, expected ~100–300"
-        assert y_min >= 99 and y_max <= 201, f"Rect y bbox: {y_min}–{y_max}, expected ~100–200"
+    assert len(nz[0]) > 0, "Rect: nothing drawn"
+    y_min, y_max = nz[0].min(), nz[0].max()
+    x_min, x_max = nz[1].min(), nz[1].max()
+    assert abs(x_min - 100) <= 1, f"Rect x_min: {x_min}, expected 100"
+    assert abs(x_max - 300) <= 1, f"Rect x_max: {x_max}, expected 300"
+    assert abs(y_min - 100) <= 1, f"Rect y_min: {y_min}, expected 100"
+    assert abs(y_max - 200) <= 1, f"Rect y_max: {y_max}, expected 200"
 
     # Circle: radius check
     canvas[:] = 0
     commit_shape(canvas, 4, (320, 240), (320, 140), (0, 0, 255), 1)
     nz = np.nonzero(canvas)
-    if len(nz[0]) > 0:
-        y_min, y_max = nz[0].min(), nz[0].max()
-        x_min, x_max = nz[1].min(), nz[1].max()
-        # radius = 100, so bbox should be (220, 140) to (420, 340), within 2px
-        assert abs(x_min - 220) <= 2, f"Circle x_min: {x_min}, expected ~220"
-        assert abs(x_max - 420) <= 2, f"Circle x_max: {x_max}, expected ~420"
-
+    assert len(nz[0]) > 0, "Circle: nothing drawn"
+    y_min, y_max = nz[0].min(), nz[0].max()
+    x_min, x_max = nz[1].min(), nz[1].max()
+    # radius = 100, so bbox should be (220, 140) to (420, 340), within 2px
+    assert abs(x_min - 220) <= 2, f"Circle x_min: {x_min}, expected 220"
+    assert abs(x_max - 420) <= 2, f"Circle x_max: {x_max}, expected 420"
+    assert abs(y_min - 140) <= 2, f"Circle y_min: {y_min}, expected 140"
+    assert abs(y_max - 340) <= 2, f"Circle y_max: {y_max}, expected 340"
 
 if __name__ == "__main__":
     try:

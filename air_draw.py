@@ -44,6 +44,15 @@ def palm_width(px):
     return dist(px[5], px[17])
 
 
+def pen_state_transition(ratio, pen_down, pinch_on, pinch_off):
+    """Return new pen state (True/False) based on hysteresis."""
+    if ratio < pinch_on and not pen_down:
+        return True
+    elif ratio > pinch_off and pen_down:
+        return False
+    return pen_down
+
+
 def pinch_ratio(px):
     """Ratio of thumb-to-index distance over palm width."""
     w = palm_width(px)
@@ -196,13 +205,13 @@ def main():
 
             # Hysteresis. prev_point is the smoothed pen point; freehand,
             # preview and commit all use it.
-            if ratio < pinch_on_threshold and not pen_down:
+            was_down = pen_down
+            pen_down = pen_state_transition(ratio, pen_down, pinch_on_threshold, pinch_off_threshold)
+            if pen_down and not was_down:
                 # Down-edge: record anchor, don't draw (no stray line from prior stroke)
-                pen_down = True
                 anchor = prev_point = px[8]
-            elif ratio > pinch_off_threshold and pen_down:
+            elif was_down and not pen_down:
                 # Release: commit at the last held point = the last preview shown
-                pen_down = False
                 if tool != 1:
                     commit_shape(canvas, tool, anchor, prev_point, (0, 0, 255), 4)
             elif pen_down:
