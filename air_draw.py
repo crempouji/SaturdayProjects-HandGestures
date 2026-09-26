@@ -65,7 +65,7 @@ def fingers_up(px):
 
 def tool_from_count(count, current_tool):
     """Map finger count to tool ID. Return current_tool if count not in TOOLS."""
-    return TOOLS.get(count, current_tool)
+    return count if count in TOOLS else current_tool
 
 
 def commit_shape(img, tool, anchor, cur, color, thickness):
@@ -176,6 +176,54 @@ def main():
                     pen_hand = h
                 else:
                     palette_hand = h
+
+        # Palette hand: finger count -> tool (with debounce)
+        if palette_hand and palm_width(palette_hand["px"]) >= 1.0:
+            fingers = fingers_up(palette_hand["px"])
+            count = sum(fingers)
+            if count == tool_count:
+                tool_hold += 1
+                if tool_hold >= TOOL_HOLD_FRAMES:
+                    tool = tool_from_count(count, tool)
+            else:
+                tool_count = count
+                tool_hold = 0
+
+        # Pen hand: pinch state machine
+        if pen_hand and palm_width(pen_hand["px"]) >= 1.0:
+            px = pen_hand["px"]
+            ratio = pinch_ratio(px)
+
+            # Hysteresis
+            if ratio < pinch_on_threshold and not pen_down:
+                pen_down = True
+                anchor = px[8]  # Index tip
+                prev_point = px[8]
+            elif ratio > pinch_off_threshold and pen_down:
+                pen_down = False
+                # Commit shape on release
+                if tool != 1 and anchor is not None:
+                    commit_shape(canvas, tool, anchor, px[8], (0, 0, 255), 4)
+
+            # Apply smoothing to pen point
+            if pen_down and prev_point is not None:
+                smoothed_x = int(SMOOTH * px[8][0] + (1 - SMOOTH) * prev_point[0])
+                smoothed_y = int(SMOOTH * px[8][1] + (1 - SMOOTH) * prev_point[1])
+                current = (smoothed_x, smoothed_y)
+            else:
+                current = px[8]
+
+            # Draw based on tool
+            if pen_down and prev_point is not None:
+                if tool == 1:  # freehand
+                    if prev_point != px[8]:  # Not first frame
+                        cv2.line(canvas, prev_point, current, (0, 0, 255), 4, cv2.LINE_AA)
+
+                prev_point = current
+            elif pen_down:
+                prev_point = px[8]  # First frame: record but don't draw
+        else:
+            pen_down = False
 
         # Display
         cv2.imshow("Air Draw", frame)
