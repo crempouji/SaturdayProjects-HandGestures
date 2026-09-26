@@ -65,6 +65,26 @@ def tool_from_count(count, current_tool):
     return TOOLS.get(count, current_tool)
 
 
+def commit_shape(img, tool, anchor, cur, color, thickness):
+    """Draw a shape (tool 2/3/4) into img in-place. tool 1 (freehand) is not a shape."""
+    if tool == 1:
+        raise ValueError("commit_shape does not handle freehand (tool 1)")
+
+    if tool == 2:  # line
+        cv2.line(img, anchor, cur, color, thickness, cv2.LINE_AA)
+
+    if tool == 3:  # rect
+        x1, y1 = anchor
+        x2, y2 = cur
+        top_left = (min(x1, x2), min(y1, y2))
+        bottom_right = (max(x1, x2), max(y1, y2))
+        cv2.rectangle(img, top_left, bottom_right, color, thickness, cv2.LINE_AA)
+
+    if tool == 4:  # circle
+        radius = int(dist(anchor, cur))
+        cv2.circle(img, anchor, radius, color, thickness, cv2.LINE_AA)
+
+
 # Quick test (comment out when submitting)
 if __name__ == "__main__":
     class MockLandmark:
@@ -88,3 +108,26 @@ if __name__ == "__main__":
     test_px_converted = to_px(landmarks, 640, 480)
     assert test_px_converted[0] == (320, 240), f"Expected (320, 240), got {test_px_converted[0]}"
     print(f"to_px test: {test_px_converted[0]} == (320, 240) ✓")
+
+    # Test commit_shape
+    print("\n--- Testing commit_shape ---")
+    canvas = np.zeros((480, 640, 3), dtype=np.uint8)
+    commit_shape(canvas, 2, (100, 100), (200, 200), (0, 0, 255), 2)
+    print(f"Line drawn: canvas has pixels at (100,100) = {canvas[100, 100]} (should be non-zero)")
+    assert canvas.any(), "Line should have drawn pixels"
+
+    canvas[:] = 0
+    commit_shape(canvas, 3, (100, 100), (300, 200), (0, 0, 255), 2)
+    print(f"Rect drawn: canvas has pixels at (150, 150) = {canvas[150, 150]} (should be non-zero)")
+    assert canvas.any(), "Rectangle should have drawn pixels"
+
+    canvas[:] = 0
+    commit_shape(canvas, 4, (320, 240), (320, 140), (0, 0, 255), 2)
+    print(f"Circle drawn: canvas has pixels = {canvas.any()} (should be True)")
+    assert canvas.any(), "Circle should have drawn pixels"
+
+    try:
+        commit_shape(canvas, 1, (0, 0), (10, 10), (0, 0, 255), 2)
+        print("ERROR: should have raised ValueError")
+    except ValueError as e:
+        print(f"Correctly raised ValueError: {e}")
