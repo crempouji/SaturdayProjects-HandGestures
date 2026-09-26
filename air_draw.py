@@ -38,8 +38,7 @@ def palm_width(px):
     """Distance from index-MCP (5) to pinky-MCP (17)."""
     if len(px) < 18:
         return 0
-    w = dist(px[5], px[17])
-    return max(w, 1.0)  # Guard against division by zero
+    return dist(px[5], px[17])
 
 
 def pinch_ratio(px):
@@ -68,6 +67,11 @@ def tool_from_count(count, current_tool):
 
 # Quick test (comment out when submitting)
 if __name__ == "__main__":
+    class MockLandmark:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
     test_px = [(100, 100)] + [(0, 0)] * 20  # Dummy hand
     test_px[5] = (100, 50)   # index-mcp
     test_px[17] = (200, 50)  # pinky-mcp
@@ -79,3 +83,8 @@ if __name__ == "__main__":
     print(f"pinch_ratio: {pinch_ratio(test_px)} (expect ~0.1-0.2)")
     print(f"fingers_up: {fingers_up(test_px)}")
     print(f"tool_from_count(2, 1): {tool_from_count(2, 1)} (expect 2)")
+
+    landmarks = [MockLandmark(0.5, 0.5)] * 21
+    test_px_converted = to_px(landmarks, 640, 480)
+    assert test_px_converted[0] == (320, 240), f"Expected (320, 240), got {test_px_converted[0]}"
+    print(f"to_px test: {test_px_converted[0]} == (320, 240) ✓")
