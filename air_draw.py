@@ -124,7 +124,7 @@ def main():
     detector = vision.HandLandmarker.create_from_options(options)
 
     # State
-    canvas = np.zeros((480, 640, 3), dtype=np.uint8)
+    canvas = None  # sized from the first frame
     pen_down = False
     prev_point = None
     anchor = None
@@ -142,6 +142,8 @@ def main():
 
         # Mirror and convert to RGB
         frame = cv2.flip(frame, 1)
+        if canvas is None:
+            canvas = np.zeros_like(frame)
         h, w = frame.shape[:2]
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -171,11 +173,9 @@ def main():
             if SWAP_HANDS:
                 target_label = "Left" if PEN_LABEL == "Right" else "Right"
 
-            for h in hands:
-                if h["label"] == target_label:
-                    pen_hand = h
-                else:
-                    palette_hand = h
+            # Same-label pair (both Left/Right) falls back to detection order
+            pen_hand = next((hand for hand in hands if hand["label"] == target_label), hands[0])
+            palette_hand = hands[1] if pen_hand is hands[0] else hands[0]
 
         # Palette hand: finger count -> tool (with debounce)
         if palette_hand and palm_width(palette_hand["px"]) >= 1.0:
@@ -187,41 +187,30 @@ def main():
                     tool = tool_from_count(count, tool)
             else:
                 tool_count = count
-                tool_hold = 0
+                tool_hold = 1
 
         # Pen hand: pinch state machine
         if pen_hand and palm_width(pen_hand["px"]) >= 1.0:
             px = pen_hand["px"]
             ratio = pinch_ratio(px)
 
-            # Hysteresis
+            # Hysteresis. prev_point is the smoothed pen point; freehand,
+            # preview and commit all use it.
             if ratio < pinch_on_threshold and not pen_down:
+                # Down-edge: record anchor, don't draw (no stray line from prior stroke)
                 pen_down = True
-                anchor = px[8]  # Index tip
-                prev_point = px[8]
+                anchor = prev_point = px[8]
             elif ratio > pinch_off_threshold and pen_down:
+                # Release: commit at the last held point = the last preview shown
                 pen_down = False
-                # Commit shape on release
-                if tool != 1 and anchor is not None:
-                    commit_shape(canvas, tool, anchor, px[8], (0, 0, 255), 4)
-
-            # Apply smoothing to pen point
-            if pen_down and prev_point is not None:
-                smoothed_x = int(SMOOTH * px[8][0] + (1 - SMOOTH) * prev_point[0])
-                smoothed_y = int(SMOOTH * px[8][1] + (1 - SMOOTH) * prev_point[1])
-                current = (smoothed_x, smoothed_y)
-            else:
-                current = px[8]
-
-            # Draw based on tool
-            if pen_down and prev_point is not None:
-                if tool == 1:  # freehand
-                    if prev_point != px[8]:  # Not first frame
-                        cv2.line(canvas, prev_point, current, (0, 0, 255), 4, cv2.LINE_AA)
-
-                prev_point = current
+                if tool != 1:
+                    commit_shape(canvas, tool, anchor, prev_point, (0, 0, 255), 4)
             elif pen_down:
-                prev_point = px[8]  # First frame: record but don't draw
+                current = (int(SMOOTH * px[8][0] + (1 - SMOOTH) * prev_point[0]),
+                           int(SMOOTH * px[8][1] + (1 - SMOOTH) * prev_point[1]))
+                if tool == 1:  # freehand
+                    cv2.line(canvas, prev_point, current, (0, 0, 255), 4, cv2.LINE_AA)
+                prev_point = current
         else:
             pen_down = False
 
@@ -230,10 +219,8 @@ def main():
         frame[mask] = canvas[mask]
 
         # Draw preview shapes (not committed)
-        if pen_hand and pen_down and tool != 1 and anchor is not None:
-            px = pen_hand["px"]
-            current = px[8]
-            commit_shape(frame, tool, anchor, current, (0, 255, 255), 4)
+        if pen_down and tool != 1:
+            commit_shape(frame, tool, anchor, prev_point, (0, 255, 255), 4)
 
         # Handle keyboard input
         key = cv2.waitKey(1) & 0xFF
