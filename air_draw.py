@@ -85,7 +85,7 @@ def commit_shape(img, tool, anchor, cur, color, thickness):
         cv2.circle(img, anchor, radius, color, thickness, cv2.LINE_AA)
 
 
-def ensure_model():
+def ensure_model() -> None:
     """Download model if not present. Exit 1 on failure."""
     if not os.path.exists(MODEL_PATH):
         print(f"Downloading hand_landmarker model...")
