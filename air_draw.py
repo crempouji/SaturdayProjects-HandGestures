@@ -4,6 +4,9 @@ import urllib.request
 import cv2
 import numpy as np
 import os
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 # Constants
 MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
@@ -98,53 +101,91 @@ def ensure_model() -> None:
             exit(1)
 
 
-# Quick test (comment out when submitting)
-if __name__ == "__main__":
-    class MockLandmark:
-        def __init__(self, x, y):
-            self.x = x
-            self.y = y
-
-    test_px = [(100, 100)] + [(0, 0)] * 20  # Dummy hand
-    test_px[5] = (100, 50)   # index-mcp
-    test_px[17] = (200, 50)  # pinky-mcp
-    test_px[4] = (110, 90)   # thumb-tip
-    test_px[8] = (100, 80)   # index-tip
-
-    print(f"dist((0,0), (3,4)): {dist((0, 0), (3, 4))} (expect ~5.0)")
-    print(f"palm_width: {palm_width(test_px)} (expect ~100.0)")
-    print(f"pinch_ratio: {pinch_ratio(test_px)} (expect ~0.1-0.2)")
-    print(f"fingers_up: {fingers_up(test_px)}")
-    print(f"tool_from_count(2, 1): {tool_from_count(2, 1)} (expect 2)")
-
-    landmarks = [MockLandmark(0.5, 0.5)] * 21
-    test_px_converted = to_px(landmarks, 640, 480)
-    assert test_px_converted[0] == (320, 240), f"Expected (320, 240), got {test_px_converted[0]}"
-    print(f"to_px test: {test_px_converted[0]} == (320, 240) ✓")
-
-    # Test commit_shape
-    print("\n--- Testing commit_shape ---")
-    canvas = np.zeros((480, 640, 3), dtype=np.uint8)
-    commit_shape(canvas, 2, (100, 100), (200, 200), (0, 0, 255), 2)
-    print(f"Line drawn: canvas has pixels at (100,100) = {canvas[100, 100]} (should be non-zero)")
-    assert canvas.any(), "Line should have drawn pixels"
-
-    canvas[:] = 0
-    commit_shape(canvas, 3, (100, 100), (300, 200), (0, 0, 255), 2)
-    print(f"Rect drawn: canvas has pixels at (150, 150) = {canvas[150, 150]} (should be non-zero)")
-    assert canvas.any(), "Rectangle should have drawn pixels"
-
-    canvas[:] = 0
-    commit_shape(canvas, 4, (320, 240), (320, 140), (0, 0, 255), 2)
-    print(f"Circle drawn: canvas has pixels = {canvas.any()} (should be True)")
-    assert canvas.any(), "Circle should have drawn pixels"
-
-    try:
-        commit_shape(canvas, 1, (0, 0), (10, 10), (0, 0, 255), 2)
-        print("ERROR: should have raised ValueError")
-    except ValueError as e:
-        print(f"Correctly raised ValueError: {e}")
-
-    print("\n--- Testing ensure_model ---")
+def main():
+    """Main frame loop."""
     ensure_model()
-    print("✓ ensure_model() completed")
+
+    # Open camera
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("cannot open camera 0")
+        exit(1)
+
+    # Set resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    # MediaPipe setup
+    options = vision.HandLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=MODEL_PATH),
+        num_hands=2,
+        running_mode=vision.RunningMode.VIDEO,
+    )
+    detector = vision.HandLandmarker.create_from_options(options)
+
+    # State
+    canvas = np.zeros((480, 640, 3), dtype=np.uint8)
+    pen_down = False
+    prev_point = None
+    anchor = None
+    tool = 1  # Start with freehand
+    tool_count = 0
+    tool_hold = 0
+    pinch_on_threshold = PINCH_ON
+    pinch_off_threshold = PINCH_OFF
+    ts = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Mirror and convert to RGB
+        frame = cv2.flip(frame, 1)
+        h, w = frame.shape[:2]
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Detect hands
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        ts_ms = int(time.perf_counter() * 1000)
+        result = detector.detect_for_video(mp_image, ts_ms)
+
+        # Extract hands with handedness
+        hands = []
+        if result.hand_landmarks and result.handedness:
+            for landmarks, handedness in zip(result.hand_landmarks, result.handedness):
+                px = to_px(landmarks, w, h)
+                label = handedness[0].category_name
+                hands.append({"px": px, "label": label})
+
+        # Assign hands: one as pen, one as palette
+        pen_hand = None
+        palette_hand = None
+
+        if len(hands) == 0:
+            pen_down = False
+        elif len(hands) == 1:
+            pen_hand = hands[0]
+        else:  # 2 hands
+            target_label = PEN_LABEL
+            if SWAP_HANDS:
+                target_label = "Left" if PEN_LABEL == "Right" else "Right"
+
+            for h in hands:
+                if h["label"] == target_label:
+                    pen_hand = h
+                else:
+                    palette_hand = h
+
+        # Display
+        cv2.imshow("Air Draw", frame)
+        if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
+            break
+
+    # Cleanup
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
