@@ -134,15 +134,12 @@ def main():
 
     # State
     canvas = None  # sized from the first frame
-    pen_down = False
-    prev_point = None
-    anchor = None
     tool = 1  # Start with freehand
-    tool_count = 0
-    tool_hold = 0
     pinch_on_threshold = PINCH_ON
     pinch_off_threshold = PINCH_OFF
-    ts = 0
+
+    # Per-hand state (track up to 2 hands)
+    hand_states = {}  # {hand_id: {"pen_down": bool, "prev_point": tuple, "anchor": tuple}}
 
     while True:
         ret, frame = cap.read()
@@ -164,77 +161,73 @@ def main():
         # Extract hands with handedness
         hands = []
         if result.hand_landmarks and result.handedness:
-            for landmarks, handedness in zip(result.hand_landmarks, result.handedness):
+            for idx, (landmarks, handedness) in enumerate(zip(result.hand_landmarks, result.handedness)):
                 px = to_px(landmarks, w, h)
                 label = handedness[0].category_name
-                hands.append({"px": px, "label": label})
+                hands.append({"px": px, "label": label, "id": idx})
 
-        # Assign hands: one as pen, one as palette
-        pen_hand = None
-        palette_hand = None
+        # Process each hand independently
+        for hand in hands:
+            hand_id = hand["id"]
+            px = hand["px"]
 
-        if len(hands) == 0:
-            pen_down = False
-        elif len(hands) == 1:
-            pen_hand = hands[0]
-        else:  # 2 hands
-            target_label = PEN_LABEL
-            if SWAP_HANDS:
-                target_label = "Left" if PEN_LABEL == "Right" else "Right"
+            if palm_width(px) < 1.0:
+                continue  # Hand too small, skip
 
-            # Same-label pair (both Left/Right) falls back to detection order
-            pen_hand = next((hand for hand in hands if hand["label"] == target_label), hands[0])
-            palette_hand = hands[1] if pen_hand is hands[0] else hands[0]
+            # Initialize hand state if not exists
+            if hand_id not in hand_states:
+                hand_states[hand_id] = {"pen_down": False, "prev_point": None, "anchor": None}
 
-        # Palette hand: finger count -> tool (with debounce)
-        if palette_hand and palm_width(palette_hand["px"]) >= 1.0:
-            fingers = fingers_up(palette_hand["px"])
-            count = sum(fingers)
-            if count == tool_count:
-                tool_hold += 1
-                if tool_hold >= TOOL_HOLD_FRAMES:
-                    tool = tool_from_count(count, tool)
-            else:
-                tool_count = count
-                tool_hold = 1
-
-        # Pen hand: pinch state machine
-        if pen_hand and palm_width(pen_hand["px"]) >= 1.0:
-            px = pen_hand["px"]
+            state = hand_states[hand_id]
             ratio = pinch_ratio(px)
 
-            # Hysteresis. prev_point is the smoothed pen point; freehand,
-            # preview and commit all use it.
-            was_down = pen_down
-            pen_down = pen_state_transition(ratio, pen_down, pinch_on_threshold, pinch_off_threshold)
-            if pen_down and not was_down:
+            # Hysteresis state machine
+            was_down = state["pen_down"]
+            state["pen_down"] = pen_state_transition(ratio, state["pen_down"], pinch_on_threshold, pinch_off_threshold)
+
+            if state["pen_down"] and not was_down:
                 # Down-edge: record anchor, don't draw (no stray line from prior stroke)
-                anchor = prev_point = px[8]
-            elif was_down and not pen_down:
-                # Release: commit at the last held point = the last preview shown
-                if tool != 1:
-                    commit_shape(canvas, tool, anchor, prev_point, (0, 0, 255), 4)
-            elif pen_down:
-                current = (int(SMOOTH * px[8][0] + (1 - SMOOTH) * prev_point[0]),
-                           int(SMOOTH * px[8][1] + (1 - SMOOTH) * prev_point[1]))
+                state["anchor"] = state["prev_point"] = px[8]
+            elif was_down and not state["pen_down"]:
+                # Release: commit at the last held point
+                if tool != 1 and state["anchor"] is not None:
+                    commit_shape(canvas, tool, state["anchor"], state["prev_point"], (0, 0, 255), 4)
+            elif state["pen_down"]:
+                # Held: draw freehand or prepare shape
+                current = (int(SMOOTH * px[8][0] + (1 - SMOOTH) * state["prev_point"][0]),
+                           int(SMOOTH * px[8][1] + (1 - SMOOTH) * state["prev_point"][1]))
                 if tool == 1:  # freehand
-                    cv2.line(canvas, prev_point, current, (0, 0, 255), 4, cv2.LINE_AA)
-                prev_point = current
-        else:
-            pen_down = False
+                    cv2.line(canvas, state["prev_point"], current, (0, 0, 255), 4, cv2.LINE_AA)
+                state["prev_point"] = current
 
         # Composite: mask-based to preserve colours
         mask = canvas.any(axis=2)
         frame[mask] = canvas[mask]
 
-        # Draw preview shapes (not committed)
-        if pen_down and tool != 1:
-            commit_shape(frame, tool, anchor, prev_point, (0, 255, 255), 4)
+        # Draw preview shapes for all hands
+        for hand in hands:
+            hand_id = hand["id"]
+            if hand_id in hand_states:
+                state = hand_states[hand_id]
+                if state["pen_down"] and tool != 1 and state["anchor"] is not None:
+                    commit_shape(frame, tool, state["anchor"], state["prev_point"], (0, 255, 255), 4)
 
         # Handle keyboard input
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q') or key == 27:  # 27 is ESC
             break
+        elif key == ord('1'):
+            tool = 1
+            print("Tool: Freehand")
+        elif key == ord('2'):
+            tool = 2
+            print("Tool: Line")
+        elif key == ord('3'):
+            tool = 3
+            print("Tool: Rectangle")
+        elif key == ord('4'):
+            tool = 4
+            print("Tool: Circle")
         elif key == ord('s'):
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             filename = f"air_draw_{timestamp}.png"
@@ -242,19 +235,22 @@ def main():
             print(f"Saved: {filename}")
         elif key == ord('c'):
             canvas[:] = 0
+            print("Canvas cleared")
         elif key == ord('['):
             pinch_on_threshold = max(0.1, pinch_on_threshold - 0.02)
             pinch_off_threshold = max(0.1, pinch_off_threshold - 0.02)
+            print(f"Pinch sensitivity: {pinch_on_threshold:.2f}")
         elif key == ord(']'):
             pinch_on_threshold = min(0.9, pinch_on_threshold + 0.02)
             pinch_off_threshold = min(0.9, pinch_off_threshold + 0.02)
+            print(f"Pinch sensitivity: {pinch_on_threshold:.2f}")
 
         # HUD: top-left, small text
         hud_lines = [
-            f"Tool: {TOOLS.get(tool, '?')} ({tool_count})",
-            f"Pinch: {pinch_ratio(pen_hand['px'] if pen_hand and palm_width(pen_hand['px']) >= 1 else []):.2f} / {pinch_on_threshold:.2f}",
-            f"Pen: {'PEN' if pen_down else '---'}",
-            f"Hands: {len(hands)}, Labels: {', '.join(h['label'] for h in hands)}",
+            f"Tool: {TOOLS.get(tool, '?')} (Press 1/2/3/4 to change)",
+            f"Pinch threshold: {pinch_on_threshold:.2f} / {pinch_off_threshold:.2f}",
+            f"Hands detected: {len(hands)}",
+            f"Keys: 1-4=tool, s=save, c=clear, [/]=calibrate, q=quit",
         ]
 
         y = 20
