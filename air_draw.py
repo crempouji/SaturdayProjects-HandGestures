@@ -85,6 +85,19 @@ def commit_shape(img, tool, anchor, cur, color, thickness):
         cv2.circle(img, anchor, radius, color, thickness, cv2.LINE_AA)
 
 
+def ensure_model():
+    """Download model if not present. Exit 1 on failure."""
+    if not os.path.exists(MODEL_PATH):
+        print(f"Downloading hand_landmarker model...")
+        try:
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+            print(f"Download complete: {MODEL_PATH}")
+        except Exception as e:
+            print(f"Download failed. Manual download: {MODEL_URL}")
+            print(f"Save to: {MODEL_PATH}")
+            exit(1)
+
+
 # Quick test (comment out when submitting)
 if __name__ == "__main__":
     class MockLandmark:
@@ -131,3 +144,7 @@ if __name__ == "__main__":
         print("ERROR: should have raised ValueError")
     except ValueError as e:
         print(f"Correctly raised ValueError: {e}")
+
+    print("\n--- Testing ensure_model ---")
+    ensure_model()
+    print("✓ ensure_model() completed")
