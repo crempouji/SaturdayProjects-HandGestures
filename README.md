@@ -1,4 +1,6 @@
-# Hand Animations
+# SaturdayProjects-HandGestures
+
+Webcam hand-tracking toys in Python: a live "filter portal" you stretch between your hands, and drawing in the air with a pinch.
 
 Two webcam toys driven by hand tracking ([MediaPipe](https://github.com/google-ai-edge/mediapipe)):
 
@@ -173,3 +175,7 @@ python3 test_air_draw.py    # prints: ok
 | `portal.py` | Filter portal app |
 | `air_draw.py` | Air drawing app; also holds the shared helpers (`to_px`, `palm_width`, …) that `portal.py` uses |
 | `test_portal.py`, `test_air_draw.py` | Tests, no camera needed |
+
+## License
+
+MIT, see [LICENSE](LICENSE).
